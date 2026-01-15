@@ -2,7 +2,7 @@ import telebot
 from telebot import types
 
 # ====== CONFIG ======
-TOKEN = "BOT_TOKEN"  # Saka token dinka nan
+TOKEN = "YOUR_BOT_TOKEN"  # Saka token dinka nan
 ADMIN_ID = 6648308251      # Saka Telegram ID ɗinka nan
 
 bot = telebot.TeleBot(TOKEN)
