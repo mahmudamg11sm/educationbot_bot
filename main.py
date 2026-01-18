@@ -1,118 +1,148 @@
+import os
+import json
+from threading import Thread
+from flask import Flask
 import telebot
 from telebot import types
 
-# ====== CONFIG ======
-TOKEN = "TOKEN"  # Saka token dinka nan
-ADMIN_ID = 6648308251      # Saka Telegram ID ɗinka nan
+# ================= CONFIG =================
+TOKEN = os.environ.get("TOKEN")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 6648308251))  # fallback
 
+OWNER_USERNAME = "@MHSM5"
+FACEBOOK_LINK = "https://www.facebook.com/share/19iY36vXk9/"
+TELEGRAM_LINK = "https://t.me/Mahmudsm1"
+X_LINK = "https://x.com/Mahmud_sm1"
+
+COINS_PER_TOPIC = 5
+DB_FILE = "db.json"
+
+# ================= FLASK =================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# ================= TELEGRAM BOT =================
 bot = telebot.TeleBot(TOKEN)
 
-# ====== Users score tracker ======
-users_scores = {}
+# ================= DATABASE =================
+if not os.path.exists(DB_FILE):
+    with open(DB_FILE, "w") as f:
+        json.dump({}, f)
 
-# ====== Lessons placeholders ======
+def load_db():
+    with open(DB_FILE,"r") as f:
+        return json.load(f)
+
+def save_db(db):
+    with open(DB_FILE,"w") as f:
+        json.dump(db,f)
+
+db = load_db()
+
+# ================= LESSONS =================
 lessons = {
-    "Physics": ["Lesson 1", "Lesson 2", "Lesson 3"],
-    "Math": ["Lesson 1", "Lesson 2", "Lesson 3"],
-    "Chemistry": ["Lesson 1", "Lesson 2", "Lesson 3"]
+    "Python": [
+        {"topic": "Variables", "q": [{"q":"Variables store data values. What keyword is used to assign?", "a":"="}]},
+        {"topic": "If Statement", "q": [{"q":"If statements make decisions. Example: if x>5:. What is x>5 called?", "a":"condition"}]}
+    ],
+    "Math": [
+        {"topic":"Speed","q":[{"q":"Speed = distance/time. Example: v=d/t. What is v called?","a":"velocity"}]}
+    ]
 }
 
-# ====== Socials / About URLs ======
-socials = {
-    "Telegram": "https://t.me/Mahmudsm1",
-    "Facebook": "https://www.facebook.com/share/1aVMXfbxQY/",
-    "X": "https://x.com/Mahmud_sm1"
-}
+user_progress = {}  # chat_id -> {subject, topic_index, q_index, attempts}
+user_coins = {}     # chat_id -> coins
 
-# ====== Broadcast buffer ======
-broadcast_buffer = {}
+# ================= BUTTONS =================
+def main_menu():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("🐍 Python", "🧮 Math")
+    kb.add("💰 My Coins", "ℹ️ About")
+    return kb
 
-# ====== Start Command ======
-@bot.message_handler(commands=["start"])
-def start(message):
-    chat_id = message.chat.id
-    users_scores[chat_id] = 0
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("Lessons", "About")
-    markup.row("Socials", "Broadcast")  # Broadcast only for admin
-    bot.send_message(chat_id, "Welcome! Choose an option:", reply_markup=markup)
+def about_buttons():
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("Telegram", url=TELEGRAM_LINK))
+    kb.add(types.InlineKeyboardButton("X", url=X_LINK))
+    kb.add(types.InlineKeyboardButton("Facebook", url=FACEBOOK_LINK))
+    return kb
 
-# ====== Text Handlers ======
+# ================= FUNCTIONS =================
+def ask_question(chat_id):
+    progress = user_progress[chat_id]
+    subj = progress["subject"]
+    topic = lessons[subj][progress["topic_index"]]
+    q_data = topic["q"][progress["q_index"]]
+    bot.send_message(chat_id, q_data["q"])
+
+# ================= MESSAGE HANDLER =================
 @bot.message_handler(func=lambda m: True)
-def menu_handler(message):
-    chat_id = message.chat.id
-    text = message.text
+def handle(msg):
+    chat_id = msg.chat.id
+    text = msg.text.strip()
 
-    if text == "Lessons":
-        show_subjects(chat_id)
-    elif text == "About":
-        about_text = (
-            "This bot helps you explore different lessons and track your progress.\n"
-            "For more info, contact @MHSM5 on Telegram."
-        )
-        bot.send_message(chat_id, about_text)
-    elif text == "Socials":
-        show_socials(chat_id)
-    elif text == "Broadcast":
-        if chat_id == ADMIN_ID:
-            msg = bot.send_message(chat_id, "Type the message you want to broadcast:")
-            bot.register_next_step_handler(msg, do_broadcast)
-        else:
-            bot.send_message(chat_id, "You are not authorized to use this.")
-    else:
-        bot.send_message(chat_id, "Choose a valid option.")
+    # Start subject
+    for subj in lessons.keys():
+        if subj.lower() in text.lower():
+            user_progress[chat_id] = {"subject":subj,"topic_index":0,"q_index":0,"attempts":0}
+            ask_question(chat_id)
+            return
 
-# ====== Lessons Menu ======
-def show_subjects(chat_id):
-    markup = types.InlineKeyboardMarkup()
-    for subject in lessons.keys():
-        markup.add(types.InlineKeyboardButton(subject, callback_data=f"subject:{subject}"))
-    bot.send_message(chat_id, "Select a subject:", reply_markup=markup)
-
-def show_lessons(chat_id, subject):
-    markup = types.InlineKeyboardMarkup()
-    for lesson in lessons[subject]:
-        markup.add(types.InlineKeyboardButton(lesson, callback_data=f"lesson:{subject}:{lesson}"))
-    bot.send_message(chat_id, f"Select a lesson from {subject}:", reply_markup=markup)
-
-# ====== Socials Menu ======
-def show_socials(chat_id):
-    markup = types.InlineKeyboardMarkup()
-    for name, url in socials.items():
-        markup.add(types.InlineKeyboardButton(name, url=url))
-    bot.send_message(chat_id, "Follow me on:", reply_markup=markup)
-
-# ====== Callback Query Handler ======
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    chat_id = call.message.chat.id
-    data = call.data
-
-    if data.startswith("subject:"):
-        subject = data.split(":")[1]
-        show_lessons(chat_id, subject)
-    elif data.startswith("lesson:"):
-        parts = data.split(":")
-        subject = parts[1]
-        lesson = parts[2]
-        # Placeholder for sending PDF or lesson content
-        bot.send_message(chat_id, f"You selected {lesson} of {subject}. (PDFs not included)")
-        # Increment score
-        users_scores[chat_id] += 1
-        bot.send_message(chat_id, f"Your current score: {users_scores[chat_id]} ✅")
-
-# ====== Broadcast Handler ======
-def do_broadcast(message):
-    if message.chat.id != ADMIN_ID:
+    # Coins check
+    if text == "💰 My Coins":
+        coins = user_coins.get(chat_id,0)
+        bot.send_message(chat_id,f"💰 You have {coins} coins.")
         return
-    text = message.text
-    # Send to all users in users_scores
-    for user_id in users_scores.keys():
-        try:
-            bot.send_message(user_id, f"📢 Broadcast:\n{text}")
-        except Exception:
-            pass
-    bot.send_message(ADMIN_ID, "Broadcast sent to all users.")
 
-# ====== Run Bot ======
-bot.infinity_polling()
+    # About section
+    if text == "ℹ️ About":
+        bot.send_message(chat_id,"Owner: "+OWNER_USERNAME, reply_markup=about_buttons())
+        return
+
+    # Answer handling
+    if chat_id in user_progress:
+        progress = user_progress[chat_id]
+        subj = progress["subject"]
+        topic = lessons[subj][progress["topic_index"]]
+        q_data = topic["q"][progress["q_index"]]
+
+        if text.lower() == q_data["a"].lower():
+            bot.send_message(chat_id,"✅ Correct! +5 coins")
+            user_coins[chat_id] = user_coins.get(chat_id,0)+COINS_PER_TOPIC
+            progress["q_index"] +=1
+            progress["attempts"]=0
+        else:
+            progress["attempts"] +=1
+            if progress["attempts"] <2:
+                bot.send_message(chat_id,"❌ Try again!")
+                return
+            else:
+                bot.send_message(chat_id,f"⚠ Correct answer: {q_data['a']}")
+                progress["q_index"] +=1
+                progress["attempts"]=0
+
+        # Next topic or finish
+        if progress["q_index"] >= len(topic["q"]):
+            progress["topic_index"] +=1
+            progress["q_index"]=0
+
+        if progress["topic_index"] >= len(lessons[subj]):
+            bot.send_message(chat_id,f"✅ You finished all {subj} lessons!", reply_markup=main_menu())
+            del user_progress[chat_id]
+        else:
+            ask_question(chat_id)
+
+# ================= START BOT =================
+def run_bot():
+    bot.infinity_polling()
+
+if __name__=="__main__":
+    Thread(target=run_flask).start()  # Flask server for Render
+    Thread(target=run_bot).start()    # Telegram bot polling
